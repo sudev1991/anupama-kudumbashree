@@ -11,7 +11,7 @@
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;600;800&display=swap');
         body { font-family: 'Manrope', sans-serif; background-color: #f8fafc; margin: 0; }
-        .nav-active { background-color: #2563eb; color: white; }
+        .nav-active { background-color: #2563eb; color: white; box-shadow: 0 4px 10px rgba(37, 99, 235, 0.3); }
     </style>
 </head>
 <body>
@@ -25,100 +25,117 @@
             const [data, setData] = useState({ members: [], transactions: [] });
             const [loading, setLoading] = useState(true);
             const [formData, setFormData] = useState({ memberId: '', type: 'investment', amount: '' });
-            const [isAdmin, setIsAdmin] = useState(false);
 
-            const SHEET_URL = "https://script.google.com/macros/s/AKfycbwEhoO4WN3D18TxehPB0vmjdDRZl-JG01qB6Qvbb5ghxraWEk96vkn24oLnA6Fo2QdyZA/exec";
+            // UPDATE THIS URL WITH YOUR GOOGLE SCRIPT URL
+            const SHEET_URL = "https://script.google.com/macros/s/AKfycbyKIF-gsKyxHeEhOYsBAWyWx2EuoqjjJ1yyr7oXHEaLUFDUpvcSb2i3Go65WYq4QByBsA/exec";
 
-           // Replace the useEffect block in your index.html with this more robust version:
-useEffect(() => {
-    console.log("Starting Fetch...");
-    fetch(SHEET_URL)
-        .then(res => res.json())
-        .then(json => {
-            console.log("Full Data Received:", json);
-            // Map data to handle different column naming styles
-            const cleanMembers = (json.members || []).map(m => ({
-                id: m.id || m.ID || '',
-                name: m.name || m.Name || 'Unknown',
-                initialLoan: Number(m.initialLoan || m['Initial Loan'] || 0)
-            }));
-            setData({ members: cleanMembers, transactions: json.transactions || [] });
-            setLoading(false);
-        })
-        .catch(err => {
-            console.error("Fetch failed:", err);
-            setLoading(false);
-        });
-}, []);
+            useEffect(() => {
+                fetch(SHEET_URL)
+                    .then(res => res.json())
+                    .then(json => {
+                        // Normalize member data
+                        const members = (json.members || []).map(m => ({
+                            id: m.id || m.ID || '',
+                            name: m.name || m.Name || 'Unknown',
+                            initialLoan: Number(m.initialLoan || m['Initial Loan'] || 0)
+                        }));
+                        setData({ members: members, transactions: json.transactions || [] });
+                        setLoading(false);
+                    })
+                    .catch(err => { console.error(err); setLoading(false); });
+            }, []);
+
+            // --- CALCULATIONS FOR REPORTS ---
+            const reportStats = useMemo(() => {
+                let totalInv = 0;
+                let totalLoanTaken = 0;
+                let totalLoanRepaid = 0;
+
+                data.transactions.forEach(t => {
+                    totalInv += Number(t.investment || t.Investment || 0);
+                    totalLoanTaken += Number(t.loanTaken || t['Loan Taken'] || 0);
+                    totalLoanRepaid += Number(t.loanRepaid || t['Loan Repaid'] || 0);
+                });
+
+                const currentLoanBalance = data.members.reduce((acc, m) => acc + m.initialLoan, 0) + (totalLoanTaken - totalLoanRepaid);
+
+                return { totalInv, currentLoanBalance, totalLoanRepaid };
+            }, [data]);
 
             const handleSubmit = async (e) => {
                 e.preventDefault();
-                if (!formData.memberId || !formData.amount) return alert("ദയവായി എല്ലാ കോളങ്ങളും പൂരിപ്പിക്കുക");
+                if (!formData.memberId || !formData.amount) return alert("ദയവായി വിവരങ്ങൾ നൽകുക");
                 
                 setLoading(true);
-                const payload = {
-                    action: 'addTransaction',
-                    memberId: formData.memberId,
-                    type: formData.type,
-                    amount: Number(formData.amount),
-                    date: new Date().toISOString()
-                };
-
+                // Note: mode 'no-cors' allows sending but won't let us read the response body.
+                // This is standard for simple Google Script Web App posts.
                 try {
-                    await fetch(SHEET_URL, { method: 'POST', mode: 'no-cors', body: JSON.stringify(payload) });
-                    alert("വിവരങ്ങൾ സേവ് ചെയ്തു!");
+                    await fetch(SHEET_URL, {
+                        method: 'POST',
+                        mode: 'no-cors',
+                        body: JSON.stringify({
+                            ...formData,
+                            amount: Number(formData.amount),
+                            date: new Date().toISOString()
+                        })
+                    });
+                    alert("സേവ് ചെയ്തു!");
                     window.location.reload();
                 } catch (err) {
-                    alert("Error saving data");
+                    alert("Error!");
                     setLoading(false);
                 }
             };
 
-            const stats = useMemo(() => {
-                const totalLoan = data.members.reduce((acc, m) => acc + Number(m.initialLoan || 0), 0);
-                const totalInv = data.transactions.reduce((acc, t) => acc + Number(t.investment || 0), 0);
-                return { totalLoan, totalInv };
-            }, [data]);
-
-            if (loading) return <div className="flex h-screen items-center justify-center font-bold">സിങ്ക് ചെയ്യുന്നു...</div>;
+            if (loading) return (
+                <div className="flex h-screen items-center justify-center flex-col">
+                    <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-blue-600 mb-4"></div>
+                    <p className="font-bold text-slate-500">കാത്തിരിക്കുക...</p>
+                </div>
+            );
 
             return (
-                <div className="max-w-md mx-auto bg-white min-h-screen shadow-xl flex flex-col relative">
-                    <header className="bg-blue-600 p-6 text-white rounded-b-[2rem] shadow-lg flex justify-between items-center">
-                        <div>
-                            <h1 className="text-2xl font-black">അനുപമ</h1>
-                            <p className="text-xs font-bold opacity-80 uppercase">{view}</p>
-                        </div>
-                        {!isAdmin && view === 'transactions' && (
-                            <button onClick={() => setIsAdmin(true)} className="bg-white/20 px-3 py-1 rounded-lg text-[10px] font-bold">ADMIN LOGIN</button>
-                        )}
+                <div className="max-w-md mx-auto bg-white min-h-screen shadow-xl flex flex-col relative pb-20">
+                    <header className="bg-blue-600 p-8 text-white rounded-b-[3rem] shadow-lg">
+                        <h1 className="text-3xl font-black tracking-tight">അനുപമ</h1>
+                        <p className="text-xs font-bold opacity-80 uppercase mt-1">
+                            {view === 'home' ? 'Dashboard' : (view === 'transactions' ? 'New Entry' : 'Reports')}
+                        </p>
                     </header>
 
-                    <main className="flex-1 p-5 pb-24">
+                    <main className="p-6">
+                        {/* HOME VIEW */}
                         {view === 'home' && (
-                            <div className="space-y-4">
-                                <div className="bg-slate-800 p-6 rounded-3xl text-white">
-                                    <p className="text-[10px] uppercase font-bold opacity-60">ആകെ ബാക്കി വായ്പ</p>
-                                    <p className="text-3xl font-black mt-1">₹{stats.totalLoan.toLocaleString()}</p>
+                            <div className="space-y-6">
+                                <div className="bg-slate-900 p-6 rounded-[2rem] text-white shadow-xl">
+                                    <p className="text-[10px] uppercase font-bold opacity-50 tracking-widest">ആകെ വായ്പ ബാക്കി</p>
+                                    <p className="text-3xl font-black mt-1">₹{reportStats.currentLoanBalance.toLocaleString()}</p>
                                 </div>
-                                <h2 className="font-black text-slate-800 mt-6">അംഗങ്ങളുടെ പട്ടിക</h2>
-                                {data.members.map((m, idx) => (
-                                    <div key={idx} className="bg-slate-50 p-4 rounded-2xl border border-slate-100 flex justify-between">
-                                        <span className="font-bold">{m.name}</span>
-                                        <span className="font-black text-blue-600">₹{m.initialLoan}</span>
+                                
+                                <div>
+                                    <h3 className="font-black text-slate-800 mb-4 px-2">അംഗങ്ങൾ</h3>
+                                    <div className="space-y-3">
+                                        {data.members.map((m, i) => (
+                                            <div key={i} className="bg-white p-4 rounded-2xl border border-slate-100 flex justify-between items-center shadow-sm">
+                                                <span className="font-bold text-slate-700">{m.name}</span>
+                                                <span className="font-black text-blue-600">₹{m.initialLoan}</span>
+                                            </div>
+                                        ))}
                                     </div>
-                                ))}
+                                </div>
                             </div>
                         )}
 
+                        {/* TRANSACTION VIEW */}
                         {view === 'transactions' && (
-                            <div className="space-y-4">
-                                <h2 className="font-black text-xl mb-4">പുതിയ ഇടപാടുകൾ</h2>
-                                <form onSubmit={handleSubmit} className="space-y-4 bg-slate-50 p-6 rounded-3xl border border-slate-100">
+                            <div className="animate-in slide-in-from-bottom-4 duration-300">
+                                <h2 className="font-black text-xl mb-6">പുതിയ എൻട്രി</h2>
+                                <form onSubmit={handleSubmit} className="space-y-5 bg-slate-50 p-6 rounded-[2rem] border border-slate-100">
                                     <div>
-                                        <label className="text-[10px] font-bold text-slate-400 uppercase">അംഗം</label>
+                                        <label className="text-[10px] font-bold text-slate-400 uppercase ml-2">അംഗം</label>
                                         <select 
-                                            className="w-full p-3 rounded-xl border mt-1"
+                                            className="w-full p-4 rounded-2xl border-none shadow-sm mt-1 font-bold text-slate-700"
+                                            value={formData.memberId}
                                             onChange={(e) => setFormData({...formData, memberId: e.target.value})}
                                         >
                                             <option value="">തിരഞ്ഞെടുക്കുക</option>
@@ -126,53 +143,61 @@ useEffect(() => {
                                         </select>
                                     </div>
                                     <div>
-                                        <label className="text-[10px] font-bold text-slate-400 uppercase">തരം</label>
+                                        <label className="text-[10px] font-bold text-slate-400 uppercase ml-2">ഇനം</label>
                                         <select 
-                                            className="w-full p-3 rounded-xl border mt-1"
+                                            className="w-full p-4 rounded-2xl border-none shadow-sm mt-1 font-bold text-slate-700"
+                                            value={formData.type}
                                             onChange={(e) => setFormData({...formData, type: e.target.value})}
                                         >
-                                            <option value="investment">സമ്പാദ്യം (Investment)</option>
+                                            <option value="investment">സമ്പാദ്യം (Saving)</option>
                                             <option value="loanTaken">വായ്പ എടുക്കൽ</option>
-                                            <option value="loanRepaid">തിരിച്ചടവ്</option>
+                                            <option value="loanRepaid">വായ്പ തിരിച്ചടവ്</option>
                                         </select>
                                     </div>
                                     <div>
-                                        <label className="text-[10px] font-bold text-slate-400 uppercase">തുക (Amount)</label>
+                                        <label className="text-[10px] font-bold text-slate-400 uppercase ml-2">തുക (Amount)</label>
                                         <input 
                                             type="number" 
-                                            className="w-full p-3 rounded-xl border mt-1" 
-                                            placeholder="0.00"
+                                            className="w-full p-4 rounded-2xl border-none shadow-sm mt-1 font-bold" 
+                                            placeholder="₹ 0.00"
+                                            value={formData.amount}
                                             onChange={(e) => setFormData({...formData, amount: e.target.value})}
                                         />
                                     </div>
-                                    <button type="submit" className="w-full bg-blue-600 text-white font-bold p-4 rounded-xl shadow-lg active:scale-95 transition-transform">
+                                    <button type="submit" className="w-full bg-blue-600 text-white font-black p-5 rounded-2xl shadow-lg shadow-blue-200 active:scale-95 transition-all">
                                         സേവ് ചെയ്യുക
                                     </button>
                                 </form>
                             </div>
                         )}
 
+                        {/* REPORTS VIEW */}
                         {view === 'reports' && (
-                            <div className="space-y-4">
+                            <div className="space-y-6 animate-in fade-in duration-500">
                                 <h2 className="font-black text-xl mb-4">റിപ്പോർട്ടുകൾ</h2>
-                                <div className="grid grid-cols-2 gap-4">
-                                    <div className="bg-blue-50 p-5 rounded-3xl border border-blue-100">
-                                        <p className="text-[10px] font-bold text-blue-400 uppercase">ആകെ സമ്പാദ്യം</p>
-                                        <p className="text-xl font-black text-blue-700">₹{stats.totalInv}</p>
+                                <div className="grid grid-cols-1 gap-4">
+                                    <div className="bg-blue-50 p-6 rounded-3xl border border-blue-100 flex justify-between items-center">
+                                        <span className="text-sm font-bold text-blue-600 uppercase">ആകെ സമ്പാദ്യം</span>
+                                        <span className="text-2xl font-black text-blue-800">₹{reportStats.totalInv.toLocaleString()}</span>
                                     </div>
-                                    <div className="bg-emerald-50 p-5 rounded-3xl border border-emerald-100">
-                                        <p className="text-[10px] font-bold text-emerald-400 uppercase">പലിശ ലഭിച്ചത്</p>
-                                        <p className="text-xl font-black text-emerald-700">₹0</p>
+                                    <div className="bg-emerald-50 p-6 rounded-3xl border border-emerald-100 flex justify-between items-center">
+                                        <span className="text-sm font-bold text-emerald-600 uppercase">തിരിച്ചടച്ച വായ്പ</span>
+                                        <span className="text-2xl font-black text-emerald-800">₹{reportStats.totalLoanRepaid.toLocaleString()}</span>
+                                    </div>
+                                    <div className="bg-orange-50 p-6 rounded-3xl border border-orange-100 flex justify-between items-center">
+                                        <span className="text-sm font-bold text-orange-600 uppercase">നിലവിലെ വായ്പ</span>
+                                        <span className="text-2xl font-black text-orange-800">₹{reportStats.currentLoanBalance.toLocaleString()}</span>
                                     </div>
                                 </div>
                             </div>
                         )}
                     </main>
 
-                    <nav className="fixed bottom-0 left-0 right-0 max-w-md mx-auto bg-white border-t p-4 flex justify-around items-center">
-                        <button onClick={() => setView('home')} className={`px-6 py-2 rounded-xl text-[10px] font-bold uppercase ${view === 'home' ? 'nav-active' : 'text-slate-400'}`}>Home</button>
-                        <button onClick={() => setView('transactions')} className={`px-6 py-2 rounded-xl text-[10px] font-bold uppercase ${view === 'transactions' ? 'nav-active' : 'text-slate-400'}`}>Entry</button>
-                        <button onClick={() => setView('reports')} className={`px-6 py-2 rounded-xl text-[10px] font-bold uppercase ${view === 'reports' ? 'nav-active' : 'text-slate-400'}`}>Report</button>
+                    {/* BOTTOM NAVIGATION */}
+                    <nav className="fixed bottom-0 left-0 right-0 max-w-md mx-auto bg-white/90 backdrop-blur-lg border-t border-slate-100 p-4 flex justify-around items-center z-50">
+                        <button onClick={() => setView('home')} className={`px-6 py-3 rounded-2xl text-[10px] font-black tracking-widest transition-all ${view === 'home' ? 'nav-active' : 'text-slate-400'}`}>HOME</button>
+                        <button onClick={() => setView('transactions')} className={`px-6 py-3 rounded-2xl text-[10px] font-black tracking-widest transition-all ${view === 'transactions' ? 'nav-active' : 'text-slate-400'}`}>ENTRY</button>
+                        <button onClick={() => setView('reports')} className={`px-6 py-3 rounded-2xl text-[10px] font-black tracking-widest transition-all ${view === 'reports' ? 'nav-active' : 'text-slate-400'}`}>REPORT</button>
                     </nav>
                 </div>
             );
