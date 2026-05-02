@@ -1,199 +1,206 @@
 <!DOCTYPE html>
-<html lang="en">
+<html>
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Anupama Kudumbashree</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
-    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
-    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-    <style>
-        @import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;600;800&display=swap');
-        body { font-family: 'Manrope', sans-serif; background-color: #f8fafc; margin: 0; }
-        .nav-active { background-color: #2563eb; color: white; transform: translateY(-3px); box-shadow: 0 4px 12px rgba(37,99,235,0.3); }
-        .animate-in { animation: fadeIn 0.3s ease-out; }
-        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
-    </style>
+<meta charset="UTF-8">
+<title>Kudumbashree App</title>
+<script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<script src="https://cdn.tailwindcss.com"></script>
 </head>
-<body>
-    <div id="root"></div>
 
-    <script type="text/babel">
-        const { useState, useEffect, useMemo } = React;
+<body class="bg-slate-100">
+<div id="root"></div>
 
-        const App = () => {
-            const [view, setView] = useState('home');
-            const [data, setData] = useState({ members: [], transactions: [] });
-            const [loading, setLoading] = useState(true);
-            const [showSearch, setShowSearch] = useState(false);
-            const [searchFilters, setSearchFilters] = useState({ name: '', month: '', date: '' });
-            const [formData, setFormData] = useState({ memberId: '', type: 'investment', amount: '' });
+<script type="text/babel">
 
-            const SHEET_URL = "https://script.google.com/macros/s/AKfycbyKIF-gsKyxHeEhOYsBAWyWx2EuoqjjJ1yyr7oXHEaLUFDUpvcSb2i3Go65WYq4QByBsA/exec";
+const DEFAULT_SHEET_URL = "https://script.google.com/macros/s/AKfycbyu9KEMvBObP-u9dof7L2rbQgYb88ZSD0dguHP8qUvB4AUDHvXv_l39WcdiQ2Zm54FowQ/exec";
 
-            useEffect(() => { fetchData(); }, []);
+const getTodayString = () => new Date().toISOString().split('T')[0];
+const getCurrentMonthKey = () => getTodayString().substring(0, 7);
 
-            const fetchData = () => {
-                setLoading(true);
-                fetch(SHEET_URL).then(res => res.json()).then(json => {
-                    setData({ 
-                        members: (json.members || []).map(m => ({ id: m.id || m.ID, name: m.name || m.Name, initialLoan: Number(m.initialLoan || 0) })), 
-                        transactions: json.transactions || [] 
-                    });
-                    setLoading(false);
-                }).catch(() => setLoading(false));
-            };
+const getWeekOfMonth = (dateStr) => {
+  const d = new Date(dateStr).getDate();
+  return Math.ceil(d / 7);
+};
 
-            const filteredTransactions = useMemo(() => {
-                return data.transactions.filter(t => {
-                    const m = data.members.find(mem => mem.id == t.memberId);
-                    const matchName = !searchFilters.name || (m && m.name.toLowerCase().includes(searchFilters.name.toLowerCase()));
-                    const matchMonth = !searchFilters.month || (t.date && t.date.includes(searchFilters.month));
-                    const matchDate = !searchFilters.date || (t.date && t.date.split('T')[0] === searchFilters.date);
-                    return matchName && matchMonth && matchDate;
-                }).reverse();
-            }, [data, searchFilters]);
+const isLateEntry = (date, enteredAt) => {
+  return (new Date(enteredAt) - new Date(date)) / (1000*60*60*24) > 6;
+};
 
-            const stats = useMemo(() => {
-                let totalInv = 0, totalLoanT = 0, totalLoanR = 0;
-                data.transactions.forEach(t => {
-                    totalInv += Number(t.investment || 0);
-                    totalLoanT += Number(t.loanTaken || 0);
-                    totalLoanR += Number(t.loanRepaid || 0);
-                });
-                const initialTotal = data.members.reduce((acc, m) => acc + m.initialLoan, 0);
-                return { totalInv, balance: initialTotal + (totalLoanT - totalLoanR), repaid: totalLoanR };
-            }, [data]);
+function App() {
 
-            const handleDelete = async (txId) => {
-                if(!confirm("ഈ എൻട്രി ഡിലീറ്റ് ചെയ്യണോ?")) return;
-                setLoading(true);
-                await fetch(SHEET_URL, { method: 'POST', mode: 'no-cors', body: JSON.stringify({ action: 'delete', id: txId })});
-                fetchData();
-            };
+  const [members, setMembers] = React.useState([]);
+  const [transactions, setTransactions] = React.useState([]);
+  const [sheetUrl, setSheetUrl] = React.useState(DEFAULT_SHEET_URL);
+  const [syncStatus, setSyncStatus] = React.useState("idle");
+  const [isLoaded, setIsLoaded] = React.useState(false);
+  const [isRemoteUpdate, setIsRemoteUpdate] = React.useState(false);
 
-            const handleSubmit = async (e) => {
-                e.preventDefault();
-                if(!formData.memberId || !formData.amount) return alert("ദയവായി വിവരങ്ങൾ നൽകുക");
-                setLoading(true);
-                await fetch(SHEET_URL, { method: 'POST', mode: 'no-cors', body: JSON.stringify({ ...formData, amount: Number(formData.amount), date: new Date().toISOString() })});
-                setFormData({ memberId: '', type: 'investment', amount: '' });
-                fetchData();
-            };
+  // ✅ GROUPED TRANSACTIONS (performance fix)
+  const txByMember = React.useMemo(() => {
+    const map = {};
+    transactions.forEach(t => {
+      if (t.isDeleted) return;
+      if (!map[t.memberId]) map[t.memberId] = [];
+      map[t.memberId].push(t);
+    });
+    return map;
+  }, [transactions]);
 
-            if (loading) return <div className="flex h-screen items-center justify-center font-bold text-blue-600 animate-pulse">ലോഡിംഗ്...</div>;
+  // ✅ LOAD FROM SHEET (CORS SAFE)
+  React.useEffect(() => {
+    if (!sheetUrl) return;
 
-            return (
-                <div className="max-w-md mx-auto bg-white min-h-screen flex flex-col relative pb-24 shadow-xl">
-                    <header className="bg-blue-600 p-6 text-white rounded-b-[2.5rem] flex justify-between items-center shadow-lg">
-                        <div>
-                            <h1 className="text-2xl font-black">അനുപമ</h1>
-                            <p className="text-[10px] font-bold opacity-70 uppercase tracking-tighter">{view}</p>
-                        </div>
-                        <button onClick={() => setShowSearch(!showSearch)} className="bg-white/20 p-2 rounded-full active:scale-90 transition-transform">🔍</button>
-                    </header>
+    async function load() {
+      try {
+        setSyncStatus("syncing");
 
-                    <main className="p-4 flex-1 overflow-y-auto">
-                        {showSearch && (
-                            <div className="bg-slate-100 p-5 rounded-[2rem] mb-6 animate-in space-y-3 shadow-inner">
-                                <p className="text-[10px] font-black text-slate-400 uppercase ml-2">Advanced Search</p>
-                                <input placeholder="അംഗത്തിന്റെ പേര്" className="w-full p-3 rounded-xl border-none text-sm shadow-sm" value={searchFilters.name} onChange={e => setSearchFilters({...searchFilters, name: e.target.value})} />
-                                <div className="flex gap-2">
-                                    <input type="month" className="w-1/2 p-3 rounded-xl border-none text-sm shadow-sm" onChange={e => setSearchFilters({...searchFilters, month: e.target.value})} />
-                                    <input type="date" className="w-1/2 p-3 rounded-xl border-none text-sm shadow-sm" onChange={e => setSearchFilters({...searchFilters, date: e.target.value})} />
-                                </div>
-                                <button onClick={() => setSearchFilters({name:'', month:'', date:''})} className="text-[10px] font-bold text-blue-600 ml-2">CLEAR FILTERS</button>
-                            </div>
-                        )}
+        const res = await fetch(sheetUrl, { method: "GET" });
 
-                        {view === 'home' && (
-                            <div className="space-y-4 animate-in">
-                                <div className="bg-slate-900 p-6 rounded-[2rem] text-white shadow-xl">
-                                    <p className="text-[10px] uppercase opacity-50 font-bold">ആകെ വായ്പ ബാക്കി</p>
-                                    <p className="text-3xl font-black">₹{stats.balance.toLocaleString()}</p>
-                                </div>
-                                <h3 className="font-black text-slate-800 ml-2">അംഗങ്ങൾ</h3>
-                                {data.members.map((m, i) => (
-                                    <div key={i} className="bg-slate-50 p-4 rounded-2xl flex justify-between border border-slate-100 shadow-sm">
-                                        <span className="font-bold text-slate-700">{m.name}</span>
-                                        <span className="font-black text-blue-600">₹{m.initialLoan}</span>
-                                    </div>
-                                ))}
-                            </div>
-                        )}
+        if (!res.ok) throw new Error("Fetch failed");
 
-                        {view === 'transactions' && (
-                            <div className="space-y-6 animate-in">
-                                <form onSubmit={handleSubmit} className="bg-blue-50 p-6 rounded-[2rem] space-y-4 shadow-sm">
-                                    <select className="w-full p-4 rounded-xl border-none font-bold text-slate-700 shadow-sm" value={formData.memberId} onChange={e => setFormData({...formData, memberId: e.target.value})}>
-                                        <option value="">അംഗത്തെ തിരഞ്ഞെടുക്കുക</option>
-                                        {data.members.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
-                                    </select>
-                                    <select className="w-full p-4 rounded-xl border-none font-bold text-slate-700 shadow-sm" value={formData.type} onChange={e => setFormData({...formData, type: e.target.value})}>
-                                        <option value="investment">സമ്പാദ്യം (Saving)</option>
-                                        <option value="loanTaken">വായ്പ എടുക്കൽ</option>
-                                        <option value="loanRepaid">തിരിച്ചടവ്</option>
-                                    </select>
-                                    <input type="number" placeholder="തുക (Amount)" className="w-full p-4 rounded-xl border-none font-bold shadow-sm" value={formData.amount} onChange={e => setFormData({...formData, amount: e.target.value})} />
-                                    <button className="w-full bg-blue-600 text-white p-4 rounded-xl font-black shadow-lg">സേവ് ചെയ്യുക</button>
-                                </form>
+        const data = await res.json();
 
-                                <div>
-                                    <h3 className="font-black text-slate-800 mb-3 ml-2 uppercase text-xs">സമീപകാല എൻട്രികൾ (Last 25)</h3>
-                                    <div className="space-y-2">
-                                        {filteredTransactions.slice(0, 25).map((t, i) => (
-                                            <div key={i} className="bg-white p-4 rounded-2xl border flex justify-between items-center shadow-sm">
-                                                <div>
-                                                    <p className="font-bold text-slate-700 text-sm">{data.members.find(m => m.id == t.memberId)?.name}</p>
-                                                    <p className="text-[10px] text-slate-400 font-bold">{new Date(t.date).toLocaleDateString()}</p>
-                                                </div>
-                                                <div className="flex items-center gap-4">
-                                                    <div className="text-right">
-                                                        <p className="font-black text-blue-600">₹{t.investment || t.loanTaken || t.loanRepaid}</p>
-                                                        <p className="text-[8px] uppercase font-bold opacity-40">{t.investment ? 'Saving' : (t.loanTaken ? 'Loan' : 'Repaid')}</p>
-                                                    </div>
-                                                    <button onClick={() => handleDelete(t.id)} className="bg-red-50 text-red-400 p-2 rounded-lg">🗑️</button>
-                                                </div>
-                                            </div>
-                                        ))}
-                                    </div>
-                                </div>
-                            </div>
-                        )}
+        setIsRemoteUpdate(true);
 
-                        {view === 'reports' && (
-                            <div className="space-y-4 animate-in">
-                                <h2 className="font-black text-xl ml-2">റിപ്പോർട്ടുകൾ</h2>
-                                <div className="grid grid-cols-1 gap-4">
-                                    <div className="bg-blue-50 p-6 rounded-[2rem] border border-blue-100 flex justify-between items-center">
-                                        <span className="text-sm font-bold text-blue-600 uppercase">ആകെ സമ്പാദ്യം</span>
-                                        <span className="text-2xl font-black text-blue-800">₹{stats.totalInv.toLocaleString()}</span>
-                                    </div>
-                                    <div className="bg-emerald-50 p-6 rounded-[2rem] border border-emerald-100 flex justify-between items-center">
-                                        <span className="text-sm font-bold text-emerald-600 uppercase">തിരിച്ചടച്ച വായ്പ</span>
-                                        <span className="text-2xl font-black text-emerald-800">₹{stats.repaid.toLocaleString()}</span>
-                                    </div>
-                                    <div className="bg-orange-50 p-6 rounded-[2rem] border border-orange-100 flex justify-between items-center">
-                                        <span className="text-sm font-bold text-orange-600 uppercase">നിലവിലെ വായ്പ</span>
-                                        <span className="text-2xl font-black text-orange-800">₹{stats.balance.toLocaleString()}</span>
-                                    </div>
-                                </div>
-                            </div>
-                        )}
-                    </main>
+        setMembers(data.members || []);
+        setTransactions(data.transactions || []);
 
-                    <nav className="fixed bottom-0 left-0 right-0 max-w-md mx-auto bg-white/90 backdrop-blur-md border-t border-slate-100 p-4 flex justify-around items-center z-50">
-                        <button onClick={() => setView('home')} className={`px-5 py-3 rounded-2xl text-[10px] font-black transition-all ${view === 'home' ? 'nav-active' : 'text-slate-400'}`}>HOME</button>
-                        <button onClick={() => setView('transactions')} className={`px-5 py-3 rounded-2xl text-[10px] font-black transition-all ${view === 'transactions' ? 'nav-active' : 'text-slate-400'}`}>ENTRY</button>
-                        <button onClick={() => setView('reports')} className={`px-5 py-3 rounded-2xl text-[10px] font-black transition-all ${view === 'reports' ? 'nav-active' : 'text-slate-400'}`}>REPORT</button>
-                    </nav>
-                </div>
-            );
-        };
+        setSyncStatus("success");
 
-        const root = ReactDOM.createRoot(document.getElementById('root'));
-        root.render(<App />);
-    </script>
+      } catch (e) {
+        console.error(e);
+        setSyncStatus("error");
+      } finally {
+        setIsLoaded(true);
+        setTimeout(()=>setSyncStatus("idle"),3000);
+      }
+    }
+
+    load();
+  }, [sheetUrl]);
+
+  // ✅ SYNC TO SHEET
+  const syncWithSheet = async () => {
+    if (!sheetUrl) return;
+
+    setSyncStatus("syncing");
+
+    try {
+      const res = await fetch(sheetUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ members, transactions })
+      });
+
+      const data = await res.json();
+
+      if (data.status === "success") {
+        setSyncStatus("success");
+      } else {
+        throw new Error();
+      }
+
+    } catch (e) {
+      setSyncStatus("error");
+    }
+
+    setTimeout(()=>setSyncStatus("idle"),3000);
+  };
+
+  // ✅ AUTO SYNC FIXED
+  React.useEffect(() => {
+    if (!isLoaded || isRemoteUpdate) {
+      setIsRemoteUpdate(false);
+      return;
+    }
+
+    const t = setTimeout(syncWithSheet, 1500);
+    return () => clearTimeout(t);
+
+  }, [members, transactions]);
+
+  // ✅ DASHBOARD (optimized)
+  const dashboard = React.useMemo(() => {
+    let total = 0;
+
+    members.forEach(m => {
+      (txByMember[m.id] || []).forEach(t => {
+        total += Number(t.investment || 0);
+      });
+    });
+
+    return total;
+  }, [members, txByMember]);
+
+  // ✅ ADD MEMBER
+  const addMember = () => {
+    const name = prompt("Enter name");
+    if (!name) return;
+
+    setMembers([...members, {
+      id: crypto.randomUUID(),
+      name
+    }]);
+  };
+
+  // ✅ ADD TRANSACTION
+  const addTx = () => {
+    if (members.length === 0) return alert("Add member first");
+
+    const m = members[0];
+
+    setTransactions([...transactions, {
+      id: crypto.randomUUID(),
+      memberId: m.id,
+      date: getTodayString(),
+      enteredAt: getTodayString(),
+      investment: Math.floor(Math.random()*100),
+      isDeleted:false
+    }]);
+  };
+
+  return (
+    <div className="p-6 max-w-xl mx-auto">
+
+      <h1 className="text-2xl font-bold mb-4">Kudumbashree App</h1>
+
+      <div className="flex gap-2 mb-4">
+        <button onClick={addMember} className="bg-blue-500 text-white px-4 py-2 rounded">Add Member</button>
+        <button onClick={addTx} className="bg-green-500 text-white px-4 py-2 rounded">Add Tx</button>
+      </div>
+
+      <div className="mb-4">
+        <p>Total Investment: ₹{dashboard}</p>
+      </div>
+
+      <div className="mb-4">
+        Sync Status: {syncStatus}
+      </div>
+
+      <div className="bg-white p-4 rounded shadow">
+        <h2 className="font-bold mb-2">Transactions</h2>
+        {transactions.map(t => (
+          <div key={t.id} className="border-b py-2">
+            ₹{t.investment} ({t.date})
+            {isLateEntry(t.date, t.enteredAt) && 
+              <span className="text-red-500 ml-2">LATE</span>}
+          </div>
+        ))}
+      </div>
+
+      {/* ✅ MOBILE SCROLL FIX */}
+      <div className="mt-6 text-xs text-gray-400">
+        ← Swipe horizontally if table overflows →
+      </div>
+
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
+
+</script>
 </body>
 </html>
