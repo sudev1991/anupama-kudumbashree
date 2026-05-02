@@ -29,14 +29,27 @@
 
             const SHEET_URL = "https://script.google.com/macros/s/AKfycbwEhoO4WN3D18TxehPB0vmjdDRZl-JG01qB6Qvbb5ghxraWEk96vkn24oLnA6Fo2QdyZA/exec";
 
-            useEffect(() => {
-                fetch(SHEET_URL)
-                    .then(res => res.json())
-                    .then(json => {
-                        setData({ members: json.members || [], transactions: json.transactions || [] });
-                        setLoading(false);
-                    });
-            }, []);
+           // Replace the useEffect block in your index.html with this more robust version:
+useEffect(() => {
+    console.log("Starting Fetch...");
+    fetch(SHEET_URL)
+        .then(res => res.json())
+        .then(json => {
+            console.log("Full Data Received:", json);
+            // Map data to handle different column naming styles
+            const cleanMembers = (json.members || []).map(m => ({
+                id: m.id || m.ID || '',
+                name: m.name || m.Name || 'Unknown',
+                initialLoan: Number(m.initialLoan || m['Initial Loan'] || 0)
+            }));
+            setData({ members: cleanMembers, transactions: json.transactions || [] });
+            setLoading(false);
+        })
+        .catch(err => {
+            console.error("Fetch failed:", err);
+            setLoading(false);
+        });
+}, []);
 
             const handleSubmit = async (e) => {
                 e.preventDefault();
